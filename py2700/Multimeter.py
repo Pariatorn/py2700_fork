@@ -17,16 +17,29 @@ no_channels_exception = Exception("No channels have been defined to set up")
 
 def convert_to_float(string: str) -> float:
     """
-    Converts a string containing figures and letters to a float omitting al letters.
+    Converts a string containing figures and letters to a float omitting all letters.
 
     Args:
-        s (str): Input string containing figures and letters.
+        string (str): Input string containing figures and letters.
 
     Returns:
         float: Converted float value.
     """
-    number_str = re.sub(r"[^\d\.-]+", "", string)
-    return float(number_str)
+    # Regular expression pattern to match a number in scientific notation
+    pattern = r"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?"
+
+    # Find the first occurrence of the pattern in the string
+    match = re.search(pattern, string)
+
+    # If a match is found, return the float value of the matched string
+    if match:
+        return float(match.group())
+    else:
+        raise ValueError("No valid number found in the string")
+
+
+def list_devices():
+    return visa.ResourceManager().list_resources()
 
 
 class Channel:
@@ -220,9 +233,6 @@ class Multimeter:
 
         self.temperature_units = temperature_units
         self.device.write("UNIT:TEMP " + self.temperature_units)
-
-    def list_devices(self):
-        return self.resource_manager.list_ressources()
 
     def define_channels(self, channel_ids: list, measurement_type: MeasurementType):
         """Used to define a group of channels to make a certain type of measurement.
