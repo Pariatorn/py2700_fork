@@ -80,38 +80,47 @@ class ScanResult:
     """
 
     def __init__(
-        self, channels: list, raw_result: list, timestamp: float, rounding: int
+        self,
+        channels: list,
+        raw_result: list,
+        timestamp: float,
+        rounding: int,
+        user_timestamp: bool,
     ):
         self.raw_result = list(raw_result)
         self.channels = list(channels)
         self.readings = {}
-        self.time_interval = 0.0
-        self.time_before = 0.0
+        self.timestamp = timestamp
+        self.device_time = 0.0
 
-        entry_index = 0
-        channel_index = 0
+        entry_index: int = 0
+        channel_index: int = 0
         last_value = 0.0
 
         for entry in raw_result:
             if entry_index % 3 == 0:
                 last_value = convert_to_float(entry)
+
+            # If there is no user specific timestamp, then the relative time will be used. The timestamp is not 0 after the first scan.
+            # Just in case, if it appears to be be, then it will be forced to 1 µs.
             if entry_index % 3 == 1:
-                if timestamp != 0:
-                    self.time_interval = timestamp
-                else:
-                    if self.time_before == 0:
-                        self.time_before = convert_to_float(entry)
-                    self.time_interval = convert_to_float(entry) - self.time_before
+                if not user_timestamp:
+                    if self.timestamp != 0:
+                        self.timestamp = convert_to_float(entry) - self.timestamp
+                    self.device_time = convert_to_float(entry)
+
+                    if self.device_time == 0:
+                        self.device_time = 1e-6
 
                 self.readings[channels[channel_index].id] = Measurement(
                     channels[channel_index],
-                    round(self.time_interval, rounding),
+                    round(self.timestamp, rounding),
                     last_value,
                 )
                 channel_index += 1
             entry_index += 1
 
-    def make_csv_row(self):
+    def make_csv_row(self) -> str:
         """Generate a CSV format row of readings in sequence.
 
         Returns
@@ -130,7 +139,7 @@ class ScanResult:
             )
         return string[:-1] + "\n"
 
-    def make_csv_header(self):
+    def make_csv_header(self) -> str:
         """Generate a CSV format row of column headings for readings.
 
         Returns
@@ -152,7 +161,7 @@ class ScanResult:
             )
         return string[:-1] + "\n"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return str(self.raw_result)
 
 
@@ -193,6 +202,7 @@ class Multimeter:
         self.connected = False
         self.setup = False
         self.temperature_units = "C"
+        self.first_scan = True
 
         # Start visa resource manager
         self.resource_manager = visa.ResourceManager("@py")
@@ -213,7 +223,7 @@ class Multimeter:
 
         self.connected = True
 
-    def set_temperature_units(self, temperature_units: str):
+    def set_temperature_units(self, temperature_units: str) -> None:
         """This sets the units used when reading in the temperature from a temperature probe.
 
         Parameters
@@ -234,7 +244,9 @@ class Multimeter:
         self.temperature_units = temperature_units
         self.device.write("UNIT:TEMP " + self.temperature_units)
 
-    def define_channels(self, channel_ids: list, measurement_type: MeasurementType):
+    def define_channels(
+        self, channel_ids: list, measurement_type: MeasurementType
+    ) -> None:
         """Used to define a group of channels to make a certain type of measurement.
 
         Parameters
@@ -258,7 +270,7 @@ class Multimeter:
         for ch in channel_ids:
             self.channels.append(Channel(ch, measurement_type, units))
 
-    def setup_scan(self):
+    def setup_scan(self) -> None:
         """Must be called before scanning channels. This completes the setup process for the multimeter after all the channels have been defined.
 
         Raises
@@ -292,13 +304,15 @@ class Multimeter:
 
         self.setup = True
 
-    def scan(self, timestamp: float = 0, rounding: int = 2):
+    def scan(self, timestamp: float = 0, rounding: int = 2) -> ScanResult:
         """[summary]
+        If the it is the first scan and no specific timestamp is given, then the device's time will be used for timestamping starting with 0, since the device starts not to count from 0 necessarily.
+        In the following scans, the device's old time will be used for reference.
 
         Parameters
         ----------
         timestamp : float
-            If timestamp is given (other than 0), then the timestamp's time will be used.
+            If timestamp is other than 0, then the input timestamp will be used.
 
         rounding : float
             Sets the number of decimals for the rounding of the timestamp value in ScanResult.
@@ -316,24 +330,40 @@ class Multimeter:
         if not self.setup:
             raise not_set_up_exception
 
+        if self.first_scan and timestamp == 0:
+            self.first_scan = False
+            return self.get_scan_result(timestamp, rounding, False)
+
+        elif not self.first_scan and timestamp == 0:
+            former_time = self.last_scan_result.device_time
+            return self.get_scan_result(former_time, rounding, False)
+
+        else:
+            self.first_scan = False
+            return self.get_scan_result(timestamp, rounding, True)
+
+    def get_scan_result(
+        self, timestamp: float, rounding: int, user_timestamp: bool
+    ) -> ScanResult:
         self.last_scan_result = ScanResult(
             self.channels,
             [x.strip() for x in self.device.query("READ?").split(",")],
             timestamp,
             rounding,
+            user_timestamp,
         )
         return self.last_scan_result
 
-    def set_timeout(self, timeout: int):
+    def set_timeout(self, timeout: int) -> None:
         self.device.timeout = timeout
 
-    def identify(self):
+    def identify(self) -> str:
         return self.device.query("*IDN?")
 
-    def display(self, string: str):
+    def display(self, string: str) -> None:
         self.device.write("DISP:TEXT:DATA '" + string + "'")
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         # close the socket connection
         self.display("CLOSING")
         time.sleep(3)
@@ -350,7 +380,7 @@ class Multimeter:
     def read(self, string: str) -> str:
         return self.device.read(string)
 
-    def make_csv_header(self):
+    def make_csv_header(self) -> str:
         if not self.setup:
             raise not_set_up_exception
 
@@ -368,7 +398,7 @@ class Multimeter:
             )
         return string[:-1] + "\n"
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.connected:
             return (
                 "Connected to device "
