@@ -66,24 +66,33 @@ class ScanResult:
     The :class:`ScanResult` class exists for ease of reading returned values. The attribute :class:`ScanResult.readings` is a dictionary of :class:`Measurement` objects with channel IDs (int) as keys.
     """
 
-    def __init__(self, channels: list, raw_result: list, timestamp: float):
+    def __init__(
+        self, channels: list, raw_result: list, timestamp: float, rounding: int
+    ):
         self.raw_result = list(raw_result)
         self.channels = list(channels)
-        self.initial_timestamp = float(timestamp)
         self.readings = {}
+        self.time_interval = 0.0
+        self.time_before = 0.0
 
         entry_index = 0
         channel_index = 0
         last_value = 0.0
-        last_time = 0.0
+
         for entry in raw_result:
             if entry_index % 3 == 0:
                 last_value = convert_to_float(entry)
             if entry_index % 3 == 1:
-                last_time = convert_to_float(entry)
+                if timestamp != 0:
+                    self.time_interval = timestamp
+                else:
+                    if self.time_before == 0:
+                        self.time_before = convert_to_float(entry)
+                    self.time_interval = convert_to_float(entry) - self.time_before
+
                 self.readings[channels[channel_index].id] = Measurement(
                     channels[channel_index],
-                    self.initial_timestamp + last_time,
+                    round(self.time_interval, rounding),
                     last_value,
                 )
                 channel_index += 1
@@ -187,7 +196,7 @@ class Multimeter:
 
         # Setup display
         self.device.write("DISP:TEXT:STAT ON")
-        self.device.write("DISP:TEXT:DATA 'READY'")
+        self.display("READY")
 
         self.connected = True
 
@@ -212,6 +221,9 @@ class Multimeter:
         self.temperature_units = temperature_units
         self.device.write("UNIT:TEMP " + self.temperature_units)
 
+    def list_devices(self):
+        return self.resource_manager.list_ressources()
+
     def define_channels(self, channel_ids: list, measurement_type: MeasurementType):
         """Used to define a group of channels to make a certain type of measurement.
 
@@ -223,14 +235,15 @@ class Multimeter:
             A :class:`MeasurementType` corresponding to the type of measurement you would like to make for these channels. Can be manually defined but usually uses a predefined type from :class:`py2700.MeasurementType`.
         """
         units = ""
-        if measurement_type.function == "TEMP":
-            units = self.temperature_units
-        elif measurement_type.function == "VOLT":
-            units = "V"
-        elif measurement_type.function == "CURR":
-            units = "A"
-        elif measurement_type.function == "RES":
-            units = "Ohms"
+        match measurement_type.function:
+            case "TEMP":
+                units = self.temperature_units
+            case "VOLT":
+                units = "V"
+            case "CURR":
+                units = "A"
+            case "RES":
+                units = "Ohms"
 
         for ch in channel_ids:
             self.channels.append(Channel(ch, measurement_type, units))
@@ -269,13 +282,16 @@ class Multimeter:
 
         self.setup = True
 
-    def scan(self, timestamp: float):
+    def scan(self, timestamp: float = 0, rounding: int = 2):
         """[summary]
 
         Parameters
         ----------
         timestamp : float
-            [description]
+            If timestamp is given (other than 0), then the timestamp's time will be used.
+
+        rounding : float
+            Sets the number of decimals for the rounding of the timestamp value in ScanResult.
 
         Returns
         -------
@@ -294,6 +310,7 @@ class Multimeter:
             self.channels,
             [x.strip() for x in self.device.query("READ?").split(",")],
             timestamp,
+            rounding,
         )
         return self.last_scan_result
 
@@ -308,7 +325,7 @@ class Multimeter:
 
     def disconnect(self):
         # close the socket connection
-        self.device.write("DISP:TEXT:DATA 'CLOSING'")
+        self.display("CLOSING")
         time.sleep(3)
         self.device.write("DISP:TEXT:STAT OFF")
         self.device.write("ROUT:OPEN:ALL")
