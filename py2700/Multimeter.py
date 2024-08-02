@@ -335,7 +335,9 @@ class Multimeter:
             return self.get_scan_result(timestamp, rounding, False)
 
         elif not self.first_scan and timestamp == 0:
-            former_time = self.last_scan_result.device_time
+            former_time = (
+                self.last_scan_result.device_time - self.last_scan_result.timestamp
+            )
             return self.get_scan_result(former_time, rounding, False)
 
         else:
